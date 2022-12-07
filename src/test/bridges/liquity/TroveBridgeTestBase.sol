@@ -3,7 +3,7 @@
 pragma solidity >=0.8.4;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {AztecTypes} from "../../../aztec/libraries/AztecTypes.sol";
+import {AztecTypes} from "rollup-encoder/libraries/AztecTypes.sol";
 import {ErrorLib} from "../../../bridges/base/ErrorLib.sol";
 import {TroveBridge} from "../../../bridges/liquity/TroveBridge.sol";
 import {IBorrowerOperations} from "../../../interfaces/liquity/IBorrowerOperations.sol";
@@ -50,7 +50,7 @@ contract TroveBridgeTestBase is TestUtil {
     fallback() external payable {}
 
     function _baseSetUp() internal {
-        setUpTokens();
+        _setUpTokensAndLabels();
 
         vm.label(address(bridge.USDC()), "USDC");
         vm.label(address(BORROWER_OPERATIONS), "BORROWER_OPERATIONS");
@@ -80,7 +80,7 @@ contract TroveBridgeTestBase is TestUtil {
         // The following is Solidity implementation of https://github.com/liquity/dev#opening-a-trove
         uint256 numTrials = 15;
         uint256 randomSeed = 42;
-        (address approxHint, , ) = HINT_HELPERS.getApproxHint(nicr, numTrials, randomSeed);
+        (address approxHint,,) = HINT_HELPERS.getApproxHint(nicr, numTrials, randomSeed);
         (address upperHint, address lowerHint) = SORTED_TROVES.findInsertPosition(nicr, approxHint, approxHint);
 
         // Open the trove
@@ -90,9 +90,7 @@ contract TroveBridgeTestBase is TestUtil {
         uint256 icr = TROVE_MANAGER.getCurrentICR(address(bridge), price);
         assertEq(icr, bridge.INITIAL_ICR(), "ICR doesn't equal initial ICR");
 
-        (uint256 debtAfterBorrowing, uint256 collAfterBorrowing, , ) = TROVE_MANAGER.getEntireDebtAndColl(
-            address(bridge)
-        );
+        (uint256 debtAfterBorrowing, uint256 collAfterBorrowing,,) = TROVE_MANAGER.getEntireDebtAndColl(address(bridge));
         assertEq(bridge.totalSupply(), debtAfterBorrowing, "TB total supply doesn't equal totalDebt");
         assertEq(collAfterBorrowing, OWNER_ETH_BALANCE, "Trove's collateral doesn't equal deposit amount");
 
@@ -143,7 +141,7 @@ contract TroveBridgeTestBase is TestUtil {
         // Set msg.sender to OWNER
         vm.startPrank(OWNER);
 
-        (uint256 debtBeforeClosure, , , ) = TROVE_MANAGER.getEntireDebtAndColl(address(bridge));
+        (uint256 debtBeforeClosure,,,) = TROVE_MANAGER.getEntireDebtAndColl(address(bridge));
 
         uint256 amountToRepay = debtBeforeClosure - 200e18;
 
@@ -184,5 +182,18 @@ contract TroveBridgeTestBase is TestUtil {
         assertEq(bridge.totalSupply(), 0, "TB total supply is not 0");
 
         vm.stopPrank();
+    }
+
+    /**
+     * @param _ethPriceDiff LUSD denominated difference from the current ETH price
+     * @return Price of LUSD denominated in ETH corresponding to the current market price of ETH modified
+     *         by `_ethPriceDiff`
+     */
+    function _getPrice(int256 _ethPriceDiff) internal returns (uint64) {
+        // Set minPrice equal to that from Liquity's oracle increased by 100 LUSD
+        uint256 minEthPrice = uint256(int256(TROVE_MANAGER.priceFeed().fetchPrice()) + _ethPriceDiff);
+        // Invert the price so that it represent max price at which I am willing to buy LUSD and not min price at which
+        // I am willing to sell ETH (just for consistency sake)
+        return uint64((bridge.PRECISION() * bridge.PRECISION()) / minEthPrice);
     }
 }

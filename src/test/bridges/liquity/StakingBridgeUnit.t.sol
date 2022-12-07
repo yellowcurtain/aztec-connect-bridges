@@ -3,22 +3,18 @@
 pragma solidity >=0.8.4;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {AztecTypes} from "../../../aztec/libraries/AztecTypes.sol";
+import {AztecTypes} from "rollup-encoder/libraries/AztecTypes.sol";
 import {ErrorLib} from "../../../bridges/base/ErrorLib.sol";
 import {TestUtil} from "./utils/TestUtil.sol";
 import {StakingBridge} from "../../../bridges/liquity/StakingBridge.sol";
 
 contract StakingBridgeUnitTest is TestUtil {
-    address public constant LUSD_USDC_POOL = 0x4e0924d3a751bE199C426d52fb1f2337fa96f736; // 500 bps fee tier
-    address public constant USDC_ETH_POOL = 0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640; // 500 bps fee tier
-    address public constant LQTY_ETH_POOL = 0xD1D5A4c0eA98971894772Dcd6D2f1dc71083C44E; // 3000 bps fee tier
-
     AztecTypes.AztecAsset internal emptyAsset;
     StakingBridge private bridge;
 
     function setUp() public {
+        _setUpTokensAndLabels();
         rollupProcessor = address(this);
-        setUpTokens();
 
         bridge = new StakingBridge(rollupProcessor);
         bridge.setApprovals();
@@ -49,31 +45,17 @@ contract StakingBridgeUnitTest is TestUtil {
         uint256 inputValue = 1e24;
         _deposit(inputValue);
 
-        AztecTypes.AztecAsset memory inputAssetA = AztecTypes.AztecAsset(
-            2,
-            address(bridge),
-            AztecTypes.AztecAssetType.ERC20
-        );
-        AztecTypes.AztecAsset memory outputAssetA = AztecTypes.AztecAsset(
-            1,
-            tokens["LQTY"].addr,
-            AztecTypes.AztecAssetType.ERC20
-        );
+        AztecTypes.AztecAsset memory inputAssetA =
+            AztecTypes.AztecAsset(2, address(bridge), AztecTypes.AztecAssetType.ERC20);
+        AztecTypes.AztecAsset memory outputAssetA =
+            AztecTypes.AztecAsset(1, tokens["LQTY"].addr, AztecTypes.AztecAssetType.ERC20);
 
         // Transfer SB back to the bridge
         IERC20(inputAssetA.erc20Address).transfer(address(bridge), inputValue);
 
         // Withdraw LQTY from the staking contract through the bridge
-        (uint256 outputValueA, , ) = bridge.convert(
-            inputAssetA,
-            emptyAsset,
-            outputAssetA,
-            emptyAsset,
-            inputValue,
-            1,
-            0,
-            address(0)
-        );
+        (uint256 outputValueA,,) =
+            bridge.convert(inputAssetA, emptyAsset, outputAssetA, emptyAsset, inputValue, 1, 0, address(0));
 
         // Check the total supply of StakingBridge accounting token (SB) token is 0
         assertEq(bridge.totalSupply(), 0);
@@ -85,25 +67,18 @@ contract StakingBridgeUnitTest is TestUtil {
         assertGe(outputValueA, inputValue);
     }
 
-    function testMultipleDepositsWithdrawals() public {
+    function testMultipleDepositsWithdrawals(uint256[2] memory _depositAmounts) public {
         uint256 i = 0;
         uint256 numIters = 2;
-        uint256 depositAmount = 203;
         uint256[] memory sbBalances = new uint256[](numIters);
 
-        AztecTypes.AztecAsset memory inputAssetA = AztecTypes.AztecAsset(
-            1,
-            tokens["LQTY"].addr,
-            AztecTypes.AztecAssetType.ERC20
-        );
-        AztecTypes.AztecAsset memory outputAssetA = AztecTypes.AztecAsset(
-            2,
-            address(bridge),
-            AztecTypes.AztecAssetType.ERC20
-        );
+        AztecTypes.AztecAsset memory inputAssetA =
+            AztecTypes.AztecAsset(1, tokens["LQTY"].addr, AztecTypes.AztecAssetType.ERC20);
+        AztecTypes.AztecAsset memory outputAssetA =
+            AztecTypes.AztecAsset(2, address(bridge), AztecTypes.AztecAssetType.ERC20);
 
         while (i < numIters) {
-            depositAmount = rand(depositAmount);
+            uint256 depositAmount = bound(_depositAmounts[i], 1e18, 1e25);
             // 1. Mint deposit amount of LQTY directly to the bridge (to avoid transfer)
             deal(inputAssetA.erc20Address, address(bridge), depositAmount);
             // 2. Mint rewards to the bridge
@@ -111,16 +86,8 @@ contract StakingBridgeUnitTest is TestUtil {
             deal(tokens["WETH"].addr, address(bridge), 1e18);
 
             // 3. Deposit LQTY to the staking contract through the bridge
-            (uint256 outputValueA, , ) = bridge.convert(
-                inputAssetA,
-                emptyAsset,
-                outputAssetA,
-                emptyAsset,
-                depositAmount,
-                i,
-                0,
-                address(0)
-            );
+            (uint256 outputValueA,,) =
+                bridge.convert(inputAssetA, emptyAsset, outputAssetA, emptyAsset, depositAmount, i, 0, address(0));
 
             // 4. Transfer SB back to RollupProcessor
             IERC20(outputAssetA.erc20Address).transferFrom(address(bridge), rollupProcessor, outputValueA);
@@ -140,15 +107,8 @@ contract StakingBridgeUnitTest is TestUtil {
             IERC20(inputAssetA.erc20Address).transfer(address(bridge), inputValue);
 
             // 7. Withdraw LQTY from staking contract through the bridge
-            (uint256 outputValueA, , ) = bridge.convert(
-                inputAssetA,
-                emptyAsset,
-                outputAssetA,
-                emptyAsset,
-                sbBalances[i],
-                numIters + i,
-                0,
-                address(0)
+            (uint256 outputValueA,,) = bridge.convert(
+                inputAssetA, emptyAsset, outputAssetA, emptyAsset, sbBalances[i], numIters + i, 0, address(0)
             );
 
             // 8. Transfer LQTY back to RollupProcessor
@@ -244,7 +204,7 @@ contract StakingBridgeUnitTest is TestUtil {
         deal(tokens["LQTY"].addr, address(bridge), _depositAmount);
 
         // 2. Deposit LQTY to the staking contract through the bridge
-        (uint256 outputValueA, , ) = bridge.convert(
+        (uint256 outputValueA,,) = bridge.convert(
             AztecTypes.AztecAsset(1, tokens["LQTY"].addr, AztecTypes.AztecAssetType.ERC20),
             emptyAsset,
             AztecTypes.AztecAsset(2, address(bridge), AztecTypes.AztecAssetType.ERC20),

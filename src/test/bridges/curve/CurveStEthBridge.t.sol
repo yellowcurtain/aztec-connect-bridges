@@ -11,7 +11,7 @@ import {ILido} from "../../../interfaces/lido/ILido.sol";
 import {IWstETH} from "../../../interfaces/lido/IWstETH.sol";
 
 import {CurveStEthBridge} from "../../../bridges/curve/CurveStEthBridge.sol";
-import {AztecTypes} from "../../../aztec/libraries/AztecTypes.sol";
+import {AztecTypes} from "rollup-encoder/libraries/AztecTypes.sol";
 import {ErrorLib} from "../../../bridges/base/ErrorLib.sol";
 
 contract CurveStEthBridgeTest is BridgeTestBase {
@@ -28,13 +28,14 @@ contract CurveStEthBridgeTest is BridgeTestBase {
 
     function setUp() public {
         bridge = new CurveStEthBridge(address(ROLLUP_PROCESSOR));
+
         vm.deal(address(bridge), 0);
         vm.prank(MULTI_SIG);
         ROLLUP_PROCESSOR.setSupportedBridge(address(bridge), 175000);
         id = ROLLUP_PROCESSOR.getSupportedBridgesLength();
 
-        ethAsset = getRealAztecAsset(address(0));
-        wstETHAsset = getRealAztecAsset(address(WRAPPED_STETH));
+        ethAsset = ROLLUP_ENCODER.getRealAztecAsset(address(0));
+        wstETHAsset = ROLLUP_ENCODER.getRealAztecAsset(address(WRAPPED_STETH));
 
         // Prefund to save gas
         deal(address(WRAPPED_STETH), address(ROLLUP_PROCESSOR), WRAPPED_STETH.balanceOf(address(ROLLUP_PROCESSOR)) + 1);
@@ -111,9 +112,8 @@ contract CurveStEthBridgeTest is BridgeTestBase {
         uint256 depositAmount = 1e18;
         vm.deal(address(bridge), depositAmount);
 
-        // Making minDy bigger than expected minDy to cause the swap to fail
-        uint256 minDy = _computeEthToWST(depositAmount) + 1e17;
-        uint64 minPrice = uint64((minDy * bridge.PRECISION()) / depositAmount);
+        uint256 expectedPrice = CURVE_POOL.get_dy(0, 1, depositAmount);
+        uint64 minPrice = uint64((expectedPrice * 101) / 100); // Min price is 1% larger than what we should receive
 
         vm.prank(address(ROLLUP_PROCESSOR));
         vm.expectRevert("Exchange resulted in fewer coins than expected");
@@ -124,9 +124,8 @@ contract CurveStEthBridgeTest is BridgeTestBase {
         uint256 depositAmount = 1e18;
         deal(address(WRAPPED_STETH), address(bridge), depositAmount);
 
-        // Making minDy bigger than expected minDy to cause the swap to fail
-        uint256 minDy = _computeWSTHToEth(depositAmount) + 1e17;
-        uint64 minPrice = uint64((minDy * bridge.PRECISION()) / depositAmount);
+        uint256 expectedPrice = CURVE_POOL.get_dy(1, 0, depositAmount);
+        uint64 minPrice = uint64((expectedPrice * 101) / 100); // Min price is 1% larger than what we should receive
 
         vm.prank(address(ROLLUP_PROCESSOR));
         vm.expectRevert("Exchange resulted in fewer coins than expected");
@@ -134,15 +133,14 @@ contract CurveStEthBridgeTest is BridgeTestBase {
     }
 
     /**
-        Testing flow:
-        1. Send ETH to bridge
-        2. Get back wstETH
-        3. Send wstETH to bridge
-        4. Get back ETH
+     * Testing flow:
+     *     1. Send ETH to bridge
+     *     2. Get back wstETH
+     *     3. Send wstETH to bridge
+     *     4. Get back ETH
      */
     function validateCurveBridge(uint256 _balance, uint256 _depositAmount) public {
         // Send ETH to bridge
-
         vm.deal(address(ROLLUP_PROCESSOR), _balance);
 
         // Convert ETH to wstETH
@@ -156,14 +154,19 @@ contract CurveStEthBridgeTest is BridgeTestBase {
         uint256 beforeETHBalance = address(ROLLUP_PROCESSOR).balance;
         uint256 beforeWstETHBalance = WRAPPED_STETH.balanceOf(address(ROLLUP_PROCESSOR));
 
-        uint256 wstEthIncrease = _computeEthToWST(_depositAmount);
-        // Set minPrice in such a way that computed minDy is equal to wstEthIncrease
-        uint64 minPrice = uint64((wstEthIncrease * bridge.PRECISION()) / _depositAmount);
+        uint256 expectedStEth = CURVE_POOL.get_dy(0, 1, _depositAmount);
+        uint64 minPrice = uint64((expectedStEth * bridge.PRECISION()) / _depositAmount);
 
-        uint256 bridgeCallData = encodeBridgeCallData(id, ethAsset, emptyAsset, wstETHAsset, emptyAsset, minPrice);
-        vm.expectEmit(true, true, false, true);
-        emit DefiBridgeProcessed(bridgeCallData, getNextNonce(), _depositAmount, wstEthIncrease, 0, true, "");
-        sendDefiRollup(bridgeCallData, _depositAmount);
+        uint256 wstEthIncrease = _computeEthToWST(_depositAmount);
+
+        uint256 bridgeCallData = ROLLUP_ENCODER.defiInteractionL2(
+            id, ethAsset, emptyAsset, wstETHAsset, emptyAsset, minPrice, _depositAmount
+        );
+
+        ROLLUP_ENCODER.registerEventToBeChecked(
+            bridgeCallData, ROLLUP_ENCODER.getNextNonce(), _depositAmount, wstEthIncrease, 0, true, ""
+        );
+        ROLLUP_ENCODER.processRollup();
 
         assertEq(address(ROLLUP_PROCESSOR).balance, beforeETHBalance - _depositAmount, "ETH balance not matching");
         assertEq(
@@ -179,14 +182,19 @@ contract CurveStEthBridgeTest is BridgeTestBase {
         uint256 beforeETHBalance = address(ROLLUP_PROCESSOR).balance;
         uint256 beforeWstEthBalance = WRAPPED_STETH.balanceOf(address(ROLLUP_PROCESSOR));
 
-        uint256 expectedEth = _computeWSTHToEth(_depositAmount);
-        // Set minPrice in such a way that computed minDy is equal to expectedEth
-        uint64 minPrice = uint64((expectedEth * bridge.PRECISION()) / _depositAmount);
+        uint256 unwrappedStStEth = LIDO.getPooledEthByShares(_depositAmount);
+        uint64 minPrice = uint64((CURVE_POOL.get_dy(1, 0, unwrappedStStEth) * bridge.PRECISION()) / unwrappedStStEth);
 
-        uint256 bridgeCallData = encodeBridgeCallData(id, wstETHAsset, emptyAsset, ethAsset, emptyAsset, minPrice);
-        vm.expectEmit(true, true, false, true);
-        emit DefiBridgeProcessed(bridgeCallData, getNextNonce(), _depositAmount, expectedEth, 0, true, "");
-        sendDefiRollup(bridgeCallData, _depositAmount);
+        uint256 expectedEth = _computeWSTHToEth(_depositAmount);
+
+        uint256 bridgeCallData = ROLLUP_ENCODER.defiInteractionL2(
+            id, wstETHAsset, emptyAsset, ethAsset, emptyAsset, minPrice, _depositAmount
+        );
+
+        ROLLUP_ENCODER.registerEventToBeChecked(
+            bridgeCallData, ROLLUP_ENCODER.getNextNonce(), _depositAmount, expectedEth, 0, true, ""
+        );
+        ROLLUP_ENCODER.processRollupAndGetBridgeResult();
 
         assertEq(address(ROLLUP_PROCESSOR).balance, beforeETHBalance + expectedEth, "ETH balance not matching");
         assertEq(

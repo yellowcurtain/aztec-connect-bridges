@@ -1,23 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2022 Aztec.
-pragma solidity >=0.6.10 <=0.8.10;
-pragma experimental ABIEncoderV2;
+pragma solidity >=0.8.4;
 
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IVault, IAsset, PoolSpecialization} from "../../interfaces/element/IVault.sol";
 import {IPool} from "../../interfaces/element/IPool.sol";
 import {ITranche} from "../../interfaces/element/ITranche.sol";
 import {IDeploymentValidator} from "../../interfaces/element/IDeploymentValidator.sol";
-import {IERC20Permit, IERC20} from "../../interfaces/IERC20Permit.sol";
 import {IWrappedPosition} from "../../interfaces/element/IWrappedPosition.sol";
-import {IRollupProcessor} from "../../aztec/interfaces/IRollupProcessor.sol";
+import {IRollupProcessor} from "rollup-encoder/interfaces/IRollupProcessor.sol";
 import {MinHeap} from "./MinHeap.sol";
 import {FullMath} from "../../libraries/uniswapv3/FullMath.sol";
 
 import {BridgeBase} from "../base/BridgeBase.sol";
 import {ErrorLib} from "../base/ErrorLib.sol";
 
-import {AztecTypes} from "../../aztec/libraries/AztecTypes.sol";
+import {AztecTypes} from "rollup-encoder/libraries/AztecTypes.sol";
 
 /**
  * @title Element Bridge
@@ -201,11 +199,9 @@ contract ElementBridge is BridgeBase {
     /// @param _convergentPool The pool's address
     /// @param _wrappedPosition The element wrapped position contract's address
     /// @param _expiry The expiry of the tranche being configured
-    function registerConvergentPoolAddress(
-        address _convergentPool,
-        address _wrappedPosition,
-        uint64 _expiry
-    ) external {
+    function registerConvergentPoolAddress(address _convergentPool, address _wrappedPosition, uint64 _expiry)
+        external
+    {
         checkAndStorePoolSpecification(_convergentPool, _wrappedPosition, _expiry);
     }
 
@@ -235,11 +231,9 @@ contract ElementBridge is BridgeBase {
     /// @param poolAddress The pool's address
     /// @param wrappedPositionAddress The element wrapped position contract's address
     /// @param expiry The expiry of the tranche being configured
-    function checkAndStorePoolSpecification(
-        address poolAddress,
-        address wrappedPositionAddress,
-        uint64 expiry
-    ) internal {
+    function checkAndStorePoolSpecification(address poolAddress, address wrappedPositionAddress, uint64 expiry)
+        internal
+    {
         PoolSpec memory poolSpec;
         IWrappedPosition wrappedPosition = IWrappedPosition(wrappedPositionAddress);
         // this underlying asset should be the real asset i.e. DAI stablecoin etc
@@ -319,7 +313,7 @@ contract ElementBridge is BridgeBase {
         // retrieve the pool address for the given pool id from balancer
         // then test it against that given to us
         IVault balancerVault = IVault(balancerAddress);
-        (address balancersPoolAddress, ) = balancerVault.getPool(poolSpec.poolId);
+        (address balancersPoolAddress,) = balancerVault.getPool(poolSpec.poolId);
         if (poolAddress != balancersPoolAddress) {
             revert VAULT_ADDRESS_MISMATCH();
         }
@@ -434,13 +428,9 @@ contract ElementBridge is BridgeBase {
     )
         external
         payable
-        override(BridgeBase)
+        override (BridgeBase)
         onlyRollup
-        returns (
-            uint256 outputValueA,
-            uint256 outputValueB,
-            bool isAsync
-        )
+        returns (uint256 outputValueA, uint256 outputValueB, bool isAsync)
     {
         int64 gasAtStart = int64(int256(gasleft()));
         int64 gasUsed = 0;
@@ -486,11 +476,8 @@ contract ElementBridge is BridgeBase {
         }
 
         // execute the swap on balancer
-        uint256 principalTokensAmount = exchangeAssetForTrancheTokens(
-            convertArgs.inputAssetAddress,
-            pool,
-            convertArgs.totalInputValue
-        );
+        uint256 principalTokensAmount =
+            exchangeAssetForTrancheTokens(convertArgs.inputAssetAddress, pool, convertArgs.totalInputValue);
         // store the tranche that underpins our interaction, the expiry and the number of received tokens against the nonce
         Interaction storage newInteraction = interactions[convertArgs.interactionNonce];
         newInteraction.quantityPT = principalTokensAmount;
@@ -519,11 +506,10 @@ contract ElementBridge is BridgeBase {
      * @param inputQuantity the quantity of the input asset we wish to swap
      * @return quantityReceived amount of tokens recieved
      */
-    function exchangeAssetForTrancheTokens(
-        address inputAsset,
-        Pool storage pool,
-        uint256 inputQuantity
-    ) internal returns (uint256 quantityReceived) {
+    function exchangeAssetForTrancheTokens(address inputAsset, Pool storage pool, uint256 inputQuantity)
+        internal
+        returns (uint256 quantityReceived)
+    {
         IVault.SingleSwap memory singleSwap = IVault.SingleSwap({
             poolId: pool.poolId, // the id of the pool we want to use
             kind: IVault.SwapKind.GIVEN_IN, // We are exchanging a given number of input tokens
@@ -540,9 +526,9 @@ contract ElementBridge is BridgeBase {
         });
 
         // approve the transfer of tokens to the balancer address
-        ERC20(inputAsset).approve(balancerAddress, inputQuantity);
+        IERC20(inputAsset).approve(balancerAddress, inputQuantity);
 
-        uint256 trancheTokenQuantityBefore = ERC20(pool.trancheAddress).balanceOf(address(this));
+        uint256 trancheTokenQuantityBefore = IERC20(pool.trancheAddress).balanceOf(address(this));
         quantityReceived = IVault(balancerAddress).swap(
             singleSwap,
             fundManagement,
@@ -550,7 +536,7 @@ contract ElementBridge is BridgeBase {
             block.timestamp
         );
 
-        uint256 trancheTokenQuantityAfter = ERC20(pool.trancheAddress).balanceOf(address(this));
+        uint256 trancheTokenQuantityAfter = IERC20(pool.trancheAddress).balanceOf(address(this));
         // ensure we haven't lost tokens!
         if (trancheTokenQuantityAfter < trancheTokenQuantityBefore) {
             revert INVALID_CHANGE_IN_BALANCE();
@@ -616,13 +602,9 @@ contract ElementBridge is BridgeBase {
     )
         external
         payable
-        override(BridgeBase)
+        override (BridgeBase)
         onlyRollup
-        returns (
-            uint256 outputValueA,
-            uint256 outputValueB,
-            bool interactionCompleted
-        )
+        returns (uint256 outputValueA, uint256 outputValueB, bool interactionCompleted)
     {
         int64 gasAtStart = int64(int256(gasleft()));
         int64 gasUsed = 0;
@@ -689,15 +671,12 @@ contract ElementBridge is BridgeBase {
             // apportion the output asset based on the interaction's holding of the principle token
             // protects against phantom overflow in the operation of
             // amountToAllocate = (trancheAccount.quantityAssetRedeemed * interaction.quantityPT) / trancheTokensHeld;
-            amountToAllocate = FullMath.mulDiv(
-                trancheAccount.quantityAssetRedeemed,
-                interaction.quantityPT,
-                trancheTokensHeld
-            );
+            amountToAllocate =
+                FullMath.mulDiv(trancheAccount.quantityAssetRedeemed, interaction.quantityPT, trancheTokensHeld);
         }
         // numDeposits and numFinalised are uint32 types, so easily within range for an int256
-        int256 numRemainingInteractionsForTranche = int256(uint256(numDepositsIntoTranche)) -
-            int256(uint256(trancheAccount.numFinalised));
+        int256 numRemainingInteractionsForTranche =
+            int256(uint256(numDepositsIntoTranche)) - int256(uint256(trancheAccount.numFinalised));
         // the number of remaining interactions should never be less than 1 here, but test for <= 1 to ensure we catch all possibilities
         if (numRemainingInteractionsForTranche <= 1 || amountToAllocate > trancheAccount.quantityAssetRemaining) {
             // if there are no more interactions to finalise after this then allocate all the remaining
@@ -710,7 +689,7 @@ contract ElementBridge is BridgeBase {
         }
 
         // approve the transfer of funds back to the rollup contract
-        ERC20(outputAssetA.erc20Address).approve(ROLLUP_PROCESSOR, amountToAllocate);
+        IERC20(outputAssetA.erc20Address).approve(ROLLUP_PROCESSOR, amountToAllocate);
         interaction.finalised = true;
         popInteractionFromNonceMapping(interaction, interactionNonce);
         outputValueA = amountToAllocate;
@@ -919,7 +898,7 @@ contract ElementBridge is BridgeBase {
         IWrappedPosition wrappedPosition = IWrappedPosition(wpAddress);
         address underlyingAddress = address(wrappedPosition.token());
         address yearnVaultAddress = address(wrappedPosition.vault());
-        uint256 vaultQuantity = ERC20(underlyingAddress).balanceOf(yearnVaultAddress);
+        uint256 vaultQuantity = IERC20(underlyingAddress).balanceOf(yearnVaultAddress);
         if (trancheAccount.quantityTokensHeld > vaultQuantity) {
             trancheAccount.redemptionStatus = TrancheRedemptionStatus.REDEMPTION_FAILED;
             return (false, "VAULT_BALANCE");

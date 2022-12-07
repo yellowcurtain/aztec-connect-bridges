@@ -5,8 +5,8 @@ pragma solidity >=0.8.4;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {AztecTypes} from "../../aztec/libraries/AztecTypes.sol";
-import {IRollupProcessor} from "../../aztec/interfaces/IRollupProcessor.sol";
+import {AztecTypes} from "rollup-encoder/libraries/AztecTypes.sol";
+import {IRollupProcessor} from "rollup-encoder/interfaces/IRollupProcessor.sol";
 import {ErrorLib} from "../base/ErrorLib.sol";
 import {BridgeBase} from "../base/BridgeBase.sol";
 import {ISwapRouter} from "../../interfaces/uniswapv3/ISwapRouter.sol";
@@ -35,15 +35,14 @@ import {IQuoter} from "../../interfaces/uniswapv3/IQuoter.sol";
  *
  *      Min price is encoded as a floating point number. First 21 bits are used for significand, last 5 bits for
  *      exponent: |21 bits significand| |5 bits exponent|
- *      To convert minimum price to this format call encodeMinPrice(...) function on this contract.
  *      Minimum amount out is computed with the following formula:
  *          (inputValue * (significand * 10**exponent)) / (10 ** inputAssetDecimals)
  *      Here are 2 examples.
  *      1) If I want to receive 10k Dai for 1 ETH I would set significand to 1 and exponent to 22.
- *         _inputValue = 1e18, asset = ETH (18 decimals), outputAssetA: Dai (18 decimals)
+ *         _totalInputValue = 1e18, asset = ETH (18 decimals), outputAssetA: Dai (18 decimals)
  *         (1e18 * (1 * 10**22)) / (10**18) = 1e22 --> 10k Dai
  *      2) If I want to receive 2000 USDC for 1 ETH, I set significand to 2 and exponent to 9.
- *         _inputValue = 1e18, asset = ETH (18 decimals), outputAssetA: USDC (6 decimals)
+ *         _totalInputValue = 1e18, asset = ETH (18 decimals), outputAssetA: USDC (6 decimals)
  *         (1e18 * (2 * 10**9)) / (10**18) = 2e9 --> 2000 USDC
  *
  *      Definition of split path: Split path is a term we use when there are multiple (in this case 2) paths between
@@ -133,7 +132,7 @@ contract UniswapBridge is BridgeBase {
      */
     function preApproveTokens(address[] calldata _tokensIn, address[] calldata _tokensOut) external {
         uint256 tokensLength = _tokensIn.length;
-        for (uint256 i; i < tokensLength; ) {
+        for (uint256 i; i < tokensLength;) {
             address tokenIn = _tokensIn[i];
             // Using safeApprove(...) instead of approve(...) and first setting the allowance to 0 because underlying
             // can be Tether
@@ -144,7 +143,7 @@ contract UniswapBridge is BridgeBase {
             }
         }
         tokensLength = _tokensOut.length;
-        for (uint256 i; i < tokensLength; ) {
+        for (uint256 i; i < tokensLength;) {
             address tokenOut = _tokensOut[i];
             // Using safeApprove(...) instead of approve(...) and first setting the allowance to 0 because underlying
             // can be Tether
@@ -157,12 +156,26 @@ contract UniswapBridge is BridgeBase {
     }
 
     /**
+     * @notice Registers subsidy criteria for a given token pair.
+     * @param _tokenIn - Input token to swap
+     * @param _tokenOut - Output token to swap
+     */
+    function registerSubsidyCriteria(address _tokenIn, address _tokenOut) external {
+        SUBSIDY.setGasUsageAndMinGasPerMinute({
+            _criteria: _computeCriteria(_tokenIn, _tokenOut),
+            _gasUsage: uint32(300000), // 300k gas (Note: this is a gas usage when only 1 split path is used)
+            _minGasPerMinute: uint32(100) // 1 fully subsidized call per 2 days (300k / (24 * 60) / 2)
+        });
+    }
+
+    /**
      * @notice A function which swaps input token for output token along the path encoded in _auxData.
      * @param _inputAssetA - Input ERC20 token
      * @param _outputAssetA - Output ERC20 token
-     * @param _inputValue - Amount of input token to swap
+     * @param _totalInputValue - Amount of input token to swap
      * @param _interactionNonce - Interaction nonce
      * @param _auxData - Encoded path (gets decoded to Path struct)
+     * @param _rollupBeneficiary - Address which receives subsidy if the call is eligible for it
      * @return outputValueA - The amount of output token received
      */
     function convert(
@@ -170,21 +183,16 @@ contract UniswapBridge is BridgeBase {
         AztecTypes.AztecAsset calldata,
         AztecTypes.AztecAsset calldata _outputAssetA,
         AztecTypes.AztecAsset calldata,
-        uint256 _inputValue,
+        uint256 _totalInputValue,
         uint256 _interactionNonce,
         uint64 _auxData,
-        address
-    )
-        external
-        payable
-        override(BridgeBase)
-        onlyRollup
-        returns (
-            uint256 outputValueA,
-            uint256,
-            bool
-        )
-    {
+        address _rollupBeneficiary
+    ) external payable override (BridgeBase) onlyRollup returns (uint256 outputValueA, uint256, bool) {
+        // Accumulate subsidy to _rollupBeneficiary
+        SUBSIDY.claimSubsidy(
+            _computeCriteria(_inputAssetA.erc20Address, _outputAssetA.erc20Address), _rollupBeneficiary
+        );
+
         bool inputIsEth = _inputAssetA.assetType == AztecTypes.AztecAssetType.ETH;
         bool outputIsEth = _outputAssetA.assetType == AztecTypes.AztecAssetType.ETH;
 
@@ -196,12 +204,10 @@ contract UniswapBridge is BridgeBase {
         }
 
         Path memory path = _decodePath(
-            inputIsEth ? WETH : _inputAssetA.erc20Address,
-            _auxData,
-            outputIsEth ? WETH : _outputAssetA.erc20Address
+            inputIsEth ? WETH : _inputAssetA.erc20Address, _auxData, outputIsEth ? WETH : _outputAssetA.erc20Address
         );
 
-        uint256 inputValueSplitPath1 = (_inputValue * path.percentage1) / 100;
+        uint256 inputValueSplitPath1 = (_totalInputValue * path.percentage1) / 100;
 
         if (path.percentage1 != 0) {
             // Swap using the first swap path
@@ -218,7 +224,7 @@ contract UniswapBridge is BridgeBase {
 
         if (path.percentage2 != 0) {
             // Swap using the second swap path
-            uint256 inputValueSplitPath2 = _inputValue - inputValueSplitPath1;
+            uint256 inputValueSplitPath2 = _totalInputValue - inputValueSplitPath1;
             outputValueA += ROUTER.exactInput{value: inputIsEth ? inputValueSplitPath2 : 0}(
                 ISwapRouter.ExactInputParams({
                     path: path.splitPath2,
@@ -238,7 +244,7 @@ contract UniswapBridge is BridgeBase {
                 emit DefaultDecimalsWarning();
             }
         }
-        uint256 amountOutMinimum = (_inputValue * path.minPrice) / 10**tokenInDecimals;
+        uint256 amountOutMinimum = (_totalInputValue * path.minPrice) / 10 ** tokenInDecimals;
         if (outputValueA < amountOutMinimum) revert InsufficientAmountOut();
 
         if (outputIsEth) {
@@ -267,13 +273,12 @@ contract UniswapBridge is BridgeBase {
     ) external view returns (uint64) {
         if (_splitPath1.percentage + _splitPath2.percentage != 100) revert InvalidPercentageAmounts();
 
-        return
-            uint64(
-                (_computeEncodedMinPrice(_amountIn, _minAmountOut, IERC20Metadata(_tokenIn).decimals()) <<
-                    SPLIT_PATHS_BIT_LENGTH) +
-                    (_encodeSplitPath(_splitPath1) << SPLIT_PATH_BIT_LENGTH) +
-                    _encodeSplitPath(_splitPath2)
-            );
+        return uint64(
+            (
+                _computeEncodedMinPrice(_amountIn, _minAmountOut, IERC20Metadata(_tokenIn).decimals())
+                    << SPLIT_PATHS_BIT_LENGTH
+            ) + (_encodeSplitPath(_splitPath1) << SPLIT_PATH_BIT_LENGTH) + _encodeSplitPath(_splitPath2)
+        );
     }
 
     /**
@@ -284,12 +289,10 @@ contract UniswapBridge is BridgeBase {
      * @param _tokenOut - Address of _tokenIn (@dev used only to fetch decimals)
      * @return amountOut -
      */
-    function quote(
-        uint256 _amountIn,
-        address _tokenIn,
-        uint64 _path,
-        address _tokenOut
-    ) external returns (uint256 amountOut) {
+    function quote(uint256 _amountIn, address _tokenIn, uint64 _path, address _tokenOut)
+        external
+        returns (uint256 amountOut)
+    {
         Path memory path = _decodePath(_tokenIn, _path, _tokenOut);
         uint256 inputValueSplitPath1 = (_amountIn * path.percentage1) / 100;
 
@@ -305,6 +308,26 @@ contract UniswapBridge is BridgeBase {
     }
 
     /**
+     * @notice Computes the criteria that is passed when claiming subsidy.
+     * @param _inputAssetA The input asset
+     * @param _outputAssetA The output asset
+     * @return The criteria
+     */
+    function computeCriteria(
+        AztecTypes.AztecAsset calldata _inputAssetA,
+        AztecTypes.AztecAsset calldata,
+        AztecTypes.AztecAsset calldata _outputAssetA,
+        AztecTypes.AztecAsset calldata,
+        uint64
+    ) public pure override (BridgeBase) returns (uint256) {
+        return _computeCriteria(_inputAssetA.erc20Address, _outputAssetA.erc20Address);
+    }
+
+    function _computeCriteria(address _inputToken, address _outputToken) internal pure returns (uint256) {
+        return uint256(keccak256(abi.encodePacked(_inputToken, _outputToken)));
+    }
+
+    /**
      * @notice A function which computes min price and encodes it in the format used in this bridge.
      * @param _amountIn - Amount of tokenIn to swap
      * @param _minAmountOut - Amount of tokenOut to receive
@@ -313,12 +336,12 @@ contract UniswapBridge is BridgeBase {
      * @dev This function is not optimized and is expected to be used on frontend and in tests.
      * @dev Reverts when min price is bigger than max encodeable value.
      */
-    function _computeEncodedMinPrice(
-        uint256 _amountIn,
-        uint256 _minAmountOut,
-        uint256 _tokenInDecimals
-    ) internal pure returns (uint256 encodedMinPrice) {
-        uint256 minPrice = (_minAmountOut * 10**_tokenInDecimals) / _amountIn;
+    function _computeEncodedMinPrice(uint256 _amountIn, uint256 _minAmountOut, uint256 _tokenInDecimals)
+        internal
+        pure
+        returns (uint256 encodedMinPrice)
+    {
+        uint256 minPrice = (_minAmountOut * 10 ** _tokenInDecimals) / _amountIn;
         // 2097151 = 2**21 - 1 --> this number and its multiples of 10 can be encoded without precision loss
         if (minPrice <= 2097151) {
             // minPrice is smaller than the boundary of significand --> significand = _x, exponent = 0
@@ -338,25 +361,20 @@ contract UniswapBridge is BridgeBase {
     /**
      * @notice A function which encodes a split path.
      * @param _path - Split path to encode
-     * @return Encoded split path (in the last 19 bits of uint)
-     * @dev In place of unused middle tokens and address(0). When fee tier is unused place there any valid value. This
-     *      value gets ignored.
+     * @return Encoded split path (in the last 19 bits of uint256)
+     * @dev In place of unused middle tokens leave address(0).
+     * @dev Fee tier corresponding to unused middle token is ignored.
      */
     function _encodeSplitPath(SplitPath calldata _path) internal pure returns (uint256) {
         if (_path.percentage == 0) return 0;
-        return
-            (_path.percentage << 12) +
-            (_encodeFeeTier(_path.fee1) << 10) +
-            (_encodeMiddleToken(_path.token1) << 7) +
-            (_encodeFeeTier(_path.fee2) << 5) +
-            (_encodeMiddleToken(_path.token2) << 2) +
-            (_encodeFeeTier(_path.fee3));
+        return (_path.percentage << 12) + (_encodeFeeTier(_path.fee1) << 10) + (_encodeMiddleToken(_path.token1) << 7)
+            + (_encodeFeeTier(_path.fee2) << 5) + (_encodeMiddleToken(_path.token2) << 2) + (_encodeFeeTier(_path.fee3));
     }
 
     /**
      * @notice A function which encodes fee tier.
      * @param _feeTier - Fee tier in bps
-     * @return Encoded fee tier (in the last 2 bits of uint)
+     * @return Encoded fee tier (in the last 2 bits of uint256)
      */
     function _encodeFeeTier(uint256 _feeTier) internal pure returns (uint256) {
         if (_feeTier == 100) {
@@ -426,24 +444,18 @@ contract UniswapBridge is BridgeBase {
      * @param _tokenOut - Output ERC20 token
      * @return path - Decoded/deserialized path struct
      */
-    function _decodePath(
-        address _tokenIn,
-        uint256 _encodedPath,
-        address _tokenOut
-    ) internal pure returns (Path memory path) {
-        (uint256 percentage1, bytes memory splitPath1) = _decodeSplitPath(
-            _tokenIn,
-            _encodedPath & SPLIT_PATH_MASK,
-            _tokenOut
-        );
+    function _decodePath(address _tokenIn, uint256 _encodedPath, address _tokenOut)
+        internal
+        pure
+        returns (Path memory path)
+    {
+        (uint256 percentage1, bytes memory splitPath1) =
+            _decodeSplitPath(_tokenIn, _encodedPath & SPLIT_PATH_MASK, _tokenOut);
         path.percentage1 = percentage1;
         path.splitPath1 = splitPath1;
 
-        (uint256 percentage2, bytes memory splitPath2) = _decodeSplitPath(
-            _tokenIn,
-            (_encodedPath >> SPLIT_PATH_BIT_LENGTH) & SPLIT_PATH_MASK,
-            _tokenOut
-        );
+        (uint256 percentage2, bytes memory splitPath2) =
+            _decodeSplitPath(_tokenIn, (_encodedPath >> SPLIT_PATH_BIT_LENGTH) & SPLIT_PATH_MASK, _tokenOut);
 
         if (percentage1 + percentage2 != 100) revert InvalidPercentageAmounts();
 
@@ -461,11 +473,11 @@ contract UniswapBridge is BridgeBase {
      * @return percentage - A percentage of input going through the corresponding split path
      * @return splitPath - A split path encoded in a format compatible with Uniswap router
      */
-    function _decodeSplitPath(
-        address _tokenIn,
-        uint256 _encodedSplitPath,
-        address _tokenOut
-    ) internal pure returns (uint256 percentage, bytes memory splitPath) {
+    function _decodeSplitPath(address _tokenIn, uint256 _encodedSplitPath, address _tokenOut)
+        internal
+        pure
+        returns (uint256 percentage, bytes memory splitPath)
+    {
         uint256 fee3 = _encodedSplitPath & FEE_MASK;
         uint256 middleToken2 = (_encodedSplitPath >> 2) & TOKEN_MASK;
         uint256 fee2 = (_encodedSplitPath >> 5) & FEE_MASK;
@@ -485,19 +497,11 @@ contract UniswapBridge is BridgeBase {
             );
         } else if (middleToken1 != 0) {
             splitPath = abi.encodePacked(
-                _tokenIn,
-                _decodeFeeTier(fee1),
-                _decodeMiddleToken(middleToken1),
-                _decodeFeeTier(fee3),
-                _tokenOut
+                _tokenIn, _decodeFeeTier(fee1), _decodeMiddleToken(middleToken1), _decodeFeeTier(fee3), _tokenOut
             );
         } else if (middleToken2 != 0) {
             splitPath = abi.encodePacked(
-                _tokenIn,
-                _decodeFeeTier(fee2),
-                _decodeMiddleToken(middleToken2),
-                _decodeFeeTier(fee3),
-                _tokenOut
+                _tokenIn, _decodeFeeTier(fee2), _decodeMiddleToken(middleToken2), _decodeFeeTier(fee3), _tokenOut
             );
         } else {
             splitPath = abi.encodePacked(_tokenIn, _decodeFeeTier(fee3), _tokenOut);
@@ -513,7 +517,7 @@ contract UniswapBridge is BridgeBase {
         // 21 bits significand, 5 bits exponent
         uint256 significand = _encodedMinPrice >> 5;
         uint256 exponent = _encodedMinPrice & EXPONENT_MASK;
-        minPrice = significand * 10**exponent;
+        minPrice = significand * 10 ** exponent;
     }
 
     /**

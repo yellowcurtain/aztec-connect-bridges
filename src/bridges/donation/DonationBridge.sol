@@ -7,7 +7,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 
 import {BridgeBase} from "../base/BridgeBase.sol";
 import {ErrorLib} from "../base/ErrorLib.sol";
-import {AztecTypes} from "../../aztec/libraries/AztecTypes.sol";
+import {AztecTypes} from "rollup-encoder/libraries/AztecTypes.sol";
 
 /**
  * @notice Bridge that allows users to collectively donate funds to an L1 address
@@ -45,7 +45,7 @@ contract DonationBridge is BridgeBase {
     /**
      * @notice Transfers `_inputAssetA` to `donees[_auxData]`
      * @param _inputAssetA The asset to donate
-     * @param _inputValue The amount to donate
+     * @param _totalInputValue The amount to donate
      * @param _auxData The id of the donee
      */
     function convert(
@@ -53,21 +53,11 @@ contract DonationBridge is BridgeBase {
         AztecTypes.AztecAsset calldata,
         AztecTypes.AztecAsset calldata,
         AztecTypes.AztecAsset calldata,
-        uint256 _inputValue,
+        uint256 _totalInputValue,
         uint256,
         uint64 _auxData,
         address
-    )
-        external
-        payable
-        override(BridgeBase)
-        onlyRollup
-        returns (
-            uint256,
-            uint256,
-            bool
-        )
-    {
+    ) external payable override (BridgeBase) onlyRollup returns (uint256, uint256, bool) {
         address receiver = donees[_auxData];
 
         if (receiver == address(0)) {
@@ -76,10 +66,10 @@ contract DonationBridge is BridgeBase {
 
         if (_inputAssetA.assetType == AztecTypes.AztecAssetType.ETH) {
             //solhint-disable-next-line
-            (bool success, ) = payable(receiver).call{gas: 30000, value: _inputValue}("");
+            (bool success,) = payable(receiver).call{gas: 30000, value: _totalInputValue}("");
             if (!success) revert EthTransferFailed();
         } else if (_inputAssetA.assetType == AztecTypes.AztecAssetType.ERC20) {
-            IERC20(_inputAssetA.erc20Address).safeTransfer(receiver, _inputValue);
+            IERC20(_inputAssetA.erc20Address).safeTransfer(receiver, _totalInputValue);
         } else {
             revert ErrorLib.InvalidInputA();
         }

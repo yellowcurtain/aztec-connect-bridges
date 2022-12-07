@@ -4,7 +4,7 @@ pragma solidity >=0.8.4;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {AztecTypes} from "../../aztec/libraries/AztecTypes.sol";
+import {AztecTypes} from "rollup-encoder/libraries/AztecTypes.sol";
 import {IWETH} from "../../interfaces/IWETH.sol";
 import {BridgeBase} from "../base/BridgeBase.sol";
 import {ErrorLib} from "../base/ErrorLib.sol";
@@ -92,7 +92,7 @@ contract StabilityPoolBridge is BridgeBase, ERC20("StabilityPoolBridge", "SPB") 
      *
      * @param _inputAssetA - LUSD (Deposit) or SPB (Withdrawal)
      * @param _outputAssetA - SPB (Deposit) or LUSD (Withdrawal)
-     * @param _inputValue - the amount of LUSD to deposit or the amount of SPB to burn and exchange for LUSD
+     * @param _totalInputValue - the amount of LUSD to deposit or the amount of SPB to burn and exchange for LUSD
      * @param _auxData - when set to 1 during withdrawals "urgent withdrawal mode" is set (see note bellow)
      * @return outputValueA - the amount of SPB (Deposit) or LUSD (Withdrawal) minted/transferred to
      * the RollupProcessor.sol
@@ -109,36 +109,27 @@ contract StabilityPoolBridge is BridgeBase, ERC20("StabilityPoolBridge", "SPB") 
         AztecTypes.AztecAsset calldata,
         AztecTypes.AztecAsset calldata _outputAssetA,
         AztecTypes.AztecAsset calldata,
-        uint256 _inputValue,
+        uint256 _totalInputValue,
         uint256,
         uint64 _auxData,
         address
-    )
-        external
-        payable
-        override(BridgeBase)
-        onlyRollup
-        returns (
-            uint256 outputValueA,
-            uint256,
-            bool
-        )
-    {
+    ) external payable override (BridgeBase) onlyRollup returns (uint256 outputValueA, uint256, bool) {
         if (_inputAssetA.erc20Address == LUSD && _outputAssetA.erc20Address == address(this)) {
             // Deposit
             // Provides LUSD to the pool and claim rewards.
-            STABILITY_POOL.provideToSP(_inputValue, FRONTEND_TAG);
+            STABILITY_POOL.provideToSP(_totalInputValue, FRONTEND_TAG);
             _swapRewardsToLUSDAndDeposit(false);
-            uint256 totalLUSDOwnedBeforeDeposit = STABILITY_POOL.getCompoundedLUSDDeposit(address(this)) - _inputValue;
+            uint256 totalLUSDOwnedBeforeDeposit =
+                STABILITY_POOL.getCompoundedLUSDDeposit(address(this)) - _totalInputValue;
             uint256 totalSupply = totalSupply();
             // outputValueA = how much SPB should be minted
             if (totalSupply == 0) {
                 // When the totalSupply is 0, I set the SPB/LUSD ratio to be 1.
-                outputValueA = _inputValue;
+                outputValueA = _totalInputValue;
             } else {
                 // totalSupply / totalLUSDOwnedBeforeDeposit = how much SPB one LUSD is worth
                 // When I multiply this ^ with the amount of LUSD deposited I get the amount of SPB to be minted.
-                outputValueA = (totalSupply * _inputValue) / totalLUSDOwnedBeforeDeposit;
+                outputValueA = (totalSupply * _totalInputValue) / totalLUSDOwnedBeforeDeposit;
             }
             _mint(address(this), outputValueA);
         } else if (_inputAssetA.erc20Address == address(this) && _outputAssetA.erc20Address == LUSD) {
@@ -149,9 +140,9 @@ contract StabilityPoolBridge is BridgeBase, ERC20("StabilityPoolBridge", "SPB") 
 
             // stabilityPool.getCompoundedLUSDDeposit(address(this)) / totalSupply() = how much LUSD is one SPB
             // outputValueA = amount of LUSD to be withdrawn and sent to RollupProcessor.sol
-            outputValueA = (STABILITY_POOL.getCompoundedLUSDDeposit(address(this)) * _inputValue) / totalSupply();
+            outputValueA = (STABILITY_POOL.getCompoundedLUSDDeposit(address(this)) * _totalInputValue) / totalSupply();
             STABILITY_POOL.withdrawFromSP(outputValueA);
-            _burn(address(this), _inputValue);
+            _burn(address(this), _totalInputValue);
         } else {
             revert ErrorLib.InvalidInput();
         }
@@ -160,7 +151,7 @@ contract StabilityPoolBridge is BridgeBase, ERC20("StabilityPoolBridge", "SPB") 
     /**
      * @dev See {IERC20-totalSupply}.
      */
-    function totalSupply() public view override(ERC20) returns (uint256) {
+    function totalSupply() public view override (ERC20) returns (uint256) {
         return super.totalSupply() - DUST;
     }
 
@@ -174,20 +165,11 @@ contract StabilityPoolBridge is BridgeBase, ERC20("StabilityPoolBridge", "SPB") 
     function _swapRewardsToLUSDAndDeposit(bool _isUrgentWithdrawalMode) internal {
         uint256 lqtyBalance = IERC20(LQTY).balanceOf(address(this));
         if (lqtyBalance > MIN_LQTY_SWAP_AMT) {
-            try
-                UNI_ROUTER.exactInputSingle(
-                    ISwapRouter.ExactInputSingleParams(
-                        LQTY,
-                        WETH,
-                        3000,
-                        address(this),
-                        block.timestamp,
-                        lqtyBalance - DUST,
-                        0,
-                        0
-                    )
+            try UNI_ROUTER.exactInputSingle(
+                ISwapRouter.ExactInputSingleParams(
+                    LQTY, WETH, 3000, address(this), block.timestamp, lqtyBalance - DUST, 0, 0
                 )
-            {} catch (bytes memory) {
+            ) {} catch (bytes memory) {
                 if (!_isUrgentWithdrawalMode) {
                     revert SwapFailed();
                 }
@@ -202,17 +184,15 @@ contract StabilityPoolBridge is BridgeBase, ERC20("StabilityPoolBridge", "SPB") 
 
         uint256 wethBalance = IERC20(WETH).balanceOf(address(this));
         if (wethBalance > MIN_ETH_SWAP_AMT) {
-            try
-                UNI_ROUTER.exactInput(
-                    ISwapRouter.ExactInputParams({
-                        path: abi.encodePacked(WETH, uint24(500), USDC, uint24(500), LUSD),
-                        recipient: address(this),
-                        deadline: block.timestamp,
-                        amountIn: wethBalance - DUST,
-                        amountOutMinimum: 0
-                    })
-                )
-            returns (uint256 lusdBalance) {
+            try UNI_ROUTER.exactInput(
+                ISwapRouter.ExactInputParams({
+                    path: abi.encodePacked(WETH, uint24(500), USDC, uint24(500), LUSD),
+                    recipient: address(this),
+                    deadline: block.timestamp,
+                    amountIn: wethBalance - DUST,
+                    amountOutMinimum: 0
+                })
+            ) returns (uint256 lusdBalance) {
                 if (lusdBalance != 0) {
                     STABILITY_POOL.provideToSP(lusdBalance, FRONTEND_TAG);
                 }

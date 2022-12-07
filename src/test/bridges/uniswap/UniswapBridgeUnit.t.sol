@@ -3,7 +3,7 @@
 pragma solidity >=0.8.4;
 
 import {Test} from "forge-std/Test.sol";
-import {AztecTypes} from "../../../aztec/libraries/AztecTypes.sol";
+import {AztecTypes} from "rollup-encoder/libraries/AztecTypes.sol";
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ErrorLib} from "../../../bridges/base/ErrorLib.sol";
@@ -80,30 +80,16 @@ contract UniswapBridgeUnitTest is Test {
         bridge.preApproveTokens(tokensIn, tokensOut);
 
         // Define input and output assets
-        AztecTypes.AztecAsset memory inputAssetA = AztecTypes.AztecAsset({
-            id: 1,
-            erc20Address: LUSD,
-            assetType: AztecTypes.AztecAssetType.ERC20
-        });
+        AztecTypes.AztecAsset memory inputAssetA =
+            AztecTypes.AztecAsset({id: 1, erc20Address: LUSD, assetType: AztecTypes.AztecAssetType.ERC20});
 
-        AztecTypes.AztecAsset memory outputAssetA = AztecTypes.AztecAsset({
-            id: 2,
-            erc20Address: LQTY,
-            assetType: AztecTypes.AztecAssetType.ERC20
-        });
+        AztecTypes.AztecAsset memory outputAssetA =
+            AztecTypes.AztecAsset({id: 2, erc20Address: LQTY, assetType: AztecTypes.AztecAssetType.ERC20});
 
         deal(LUSD, address(bridge), swapAmount);
 
-        (uint256 outputValueA, , ) = bridge.convert(
-            inputAssetA,
-            emptyAsset,
-            outputAssetA,
-            emptyAsset,
-            swapAmount,
-            0,
-            encodedPath,
-            address(0)
-        );
+        (uint256 outputValueA,,) =
+            bridge.convert(inputAssetA, emptyAsset, outputAssetA, emptyAsset, swapAmount, 0, encodedPath, address(0));
 
         IERC20(outputAssetA.erc20Address).transferFrom(address(bridge), rollupProcessor, outputValueA);
 
@@ -128,29 +114,16 @@ contract UniswapBridgeUnitTest is Test {
         bridge.preApproveTokens(tokensIn, tokensOut);
 
         // Define input and output assets
-        AztecTypes.AztecAsset memory inputAssetA = AztecTypes.AztecAsset({
-            id: 0,
-            erc20Address: address(0),
-            assetType: AztecTypes.AztecAssetType.ETH
-        });
+        AztecTypes.AztecAsset memory inputAssetA =
+            AztecTypes.AztecAsset({id: 0, erc20Address: address(0), assetType: AztecTypes.AztecAssetType.ETH});
 
-        AztecTypes.AztecAsset memory outputAssetA = AztecTypes.AztecAsset({
-            id: 2,
-            erc20Address: LQTY,
-            assetType: AztecTypes.AztecAssetType.ERC20
-        });
+        AztecTypes.AztecAsset memory outputAssetA =
+            AztecTypes.AztecAsset({id: 2, erc20Address: LQTY, assetType: AztecTypes.AztecAssetType.ERC20});
 
         deal(rollupProcessor, swapAmount);
 
-        (uint256 outputValueA, , ) = bridge.convert{value: swapAmount}(
-            inputAssetA,
-            emptyAsset,
-            outputAssetA,
-            emptyAsset,
-            swapAmount,
-            0,
-            encodedPath,
-            address(0)
+        (uint256 outputValueA,,) = bridge.convert{value: swapAmount}(
+            inputAssetA, emptyAsset, outputAssetA, emptyAsset, swapAmount, 0, encodedPath, address(0)
         );
 
         IERC20(outputAssetA.erc20Address).transferFrom(address(bridge), rollupProcessor, outputValueA);
@@ -162,12 +135,10 @@ contract UniswapBridgeUnitTest is Test {
         uint256 swapAmount = 1e22; // 10k LQTY
 
         //           3000
-        // PATH1 LQTY  -> ETH   85% of input 1010101 00 000 00 000 10
-        //           10000
-        // PATH2 LQTY  -> ETH   15% of input 0001111 00 000 00 000 11
+        // PATH1 LQTY -> ETH   100% of input 1010101 00 000 00 000 10
         // MIN PRICE: significand 0, exponent 0
-        // 000000000000000000000 00000 | 1010101 00 000 00 000 10 | 0001111 00 000 00 000 11
-        uint64 encodedPath = 0x2A8010F003;
+        // 000000000000000000000 00000 | 1100100 00 000 00 000 10 | 0000000 00 000 00 000 11
+        uint64 encodedPath = 0x3200100003;
 
         address[] memory tokensIn = new address[](1);
         tokensIn[0] = LQTY;
@@ -176,30 +147,16 @@ contract UniswapBridgeUnitTest is Test {
         bridge.preApproveTokens(tokensIn, tokensOut);
 
         // Define input and output assets
-        AztecTypes.AztecAsset memory inputAssetA = AztecTypes.AztecAsset({
-            id: 2,
-            erc20Address: LQTY,
-            assetType: AztecTypes.AztecAssetType.ERC20
-        });
+        AztecTypes.AztecAsset memory inputAssetA =
+            AztecTypes.AztecAsset({id: 2, erc20Address: LQTY, assetType: AztecTypes.AztecAssetType.ERC20});
 
-        AztecTypes.AztecAsset memory outputAssetA = AztecTypes.AztecAsset({
-            id: 0,
-            erc20Address: address(0),
-            assetType: AztecTypes.AztecAssetType.ETH
-        });
+        AztecTypes.AztecAsset memory outputAssetA =
+            AztecTypes.AztecAsset({id: 0, erc20Address: address(0), assetType: AztecTypes.AztecAssetType.ETH});
 
         deal(LQTY, address(bridge), swapAmount);
 
-        (uint256 outputValueA, , ) = bridge.convert(
-            inputAssetA,
-            emptyAsset,
-            outputAssetA,
-            emptyAsset,
-            swapAmount,
-            0,
-            encodedPath,
-            address(0)
-        );
+        (uint256 outputValueA,,) =
+            bridge.convert(inputAssetA, emptyAsset, outputAssetA, emptyAsset, swapAmount, 0, encodedPath, address(0));
 
         assertGt(outputValueA, 0);
     }
@@ -208,16 +165,10 @@ contract UniswapBridgeUnitTest is Test {
         // Trying to swap anywhere from 0.1 ETH to 10 thousand ETH
         uint256 swapAmount = bound(_swapAmount, 1e17, 1e22);
 
-        uint256 quote = QUOTER.quoteExactInput(
-            abi.encodePacked(WETH, uint24(500), USDC, uint24(3000), GUSD),
-            swapAmount
-        );
+        uint256 quote =
+            QUOTER.quoteExactInput(abi.encodePacked(WETH, uint24(500), USDC, uint24(3000), GUSD), swapAmount);
         uint64 encodedPath = bridge.encodePath(
-            swapAmount,
-            quote,
-            WETH,
-            emptySplitPath,
-            UniswapBridge.SplitPath(100, 500, USDC, 100, address(0), 3000)
+            swapAmount, quote, WETH, emptySplitPath, UniswapBridge.SplitPath(100, 500, USDC, 100, address(0), 3000)
         );
 
         address[] memory tokensIn = new address[](1);
@@ -229,30 +180,16 @@ contract UniswapBridgeUnitTest is Test {
         bridge.preApproveTokens(tokensIn, tokensOut);
 
         // Define input and output assets
-        AztecTypes.AztecAsset memory inputAssetA = AztecTypes.AztecAsset({
-            id: 2,
-            erc20Address: WETH,
-            assetType: AztecTypes.AztecAssetType.ERC20
-        });
+        AztecTypes.AztecAsset memory inputAssetA =
+            AztecTypes.AztecAsset({id: 2, erc20Address: WETH, assetType: AztecTypes.AztecAssetType.ERC20});
 
-        AztecTypes.AztecAsset memory outputAssetA = AztecTypes.AztecAsset({
-            id: 4,
-            erc20Address: GUSD,
-            assetType: AztecTypes.AztecAssetType.ERC20
-        });
+        AztecTypes.AztecAsset memory outputAssetA =
+            AztecTypes.AztecAsset({id: 4, erc20Address: GUSD, assetType: AztecTypes.AztecAssetType.ERC20});
 
         deal(WETH, address(bridge), swapAmount);
 
-        (uint256 outputValueA, , ) = bridge.convert(
-            inputAssetA,
-            emptyAsset,
-            outputAssetA,
-            emptyAsset,
-            swapAmount,
-            0,
-            encodedPath,
-            address(0)
-        );
+        (uint256 outputValueA,,) =
+            bridge.convert(inputAssetA, emptyAsset, outputAssetA, emptyAsset, swapAmount, 0, encodedPath, address(0));
 
         IERC20(outputAssetA.erc20Address).transferFrom(address(bridge), rollupProcessor, outputValueA);
 
@@ -265,11 +202,7 @@ contract UniswapBridgeUnitTest is Test {
 
         uint256 quote = QUOTER.quoteExactInput(abi.encodePacked(USDC, uint24(500), WETH), swapAmount);
         uint64 encodedPath = bridge.encodePath(
-            swapAmount,
-            quote,
-            USDC,
-            emptySplitPath,
-            UniswapBridge.SplitPath(100, 100, address(0), 100, address(0), 500)
+            swapAmount, quote, USDC, emptySplitPath, UniswapBridge.SplitPath(100, 100, address(0), 100, address(0), 500)
         );
 
         address[] memory tokensIn = new address[](1);
@@ -281,30 +214,16 @@ contract UniswapBridgeUnitTest is Test {
         bridge.preApproveTokens(tokensIn, tokensOut);
 
         // Define input and output assets
-        AztecTypes.AztecAsset memory inputAssetA = AztecTypes.AztecAsset({
-            id: 4,
-            erc20Address: USDC,
-            assetType: AztecTypes.AztecAssetType.ERC20
-        });
+        AztecTypes.AztecAsset memory inputAssetA =
+            AztecTypes.AztecAsset({id: 4, erc20Address: USDC, assetType: AztecTypes.AztecAssetType.ERC20});
 
-        AztecTypes.AztecAsset memory outputAssetA = AztecTypes.AztecAsset({
-            id: 2,
-            erc20Address: WETH,
-            assetType: AztecTypes.AztecAssetType.ERC20
-        });
+        AztecTypes.AztecAsset memory outputAssetA =
+            AztecTypes.AztecAsset({id: 2, erc20Address: WETH, assetType: AztecTypes.AztecAssetType.ERC20});
 
         deal(USDC, address(bridge), swapAmount);
 
-        (uint256 outputValueA, , ) = bridge.convert(
-            inputAssetA,
-            emptyAsset,
-            outputAssetA,
-            emptyAsset,
-            swapAmount,
-            0,
-            encodedPath,
-            address(0)
-        );
+        (uint256 outputValueA,,) =
+            bridge.convert(inputAssetA, emptyAsset, outputAssetA, emptyAsset, swapAmount, 0, encodedPath, address(0));
 
         IERC20(outputAssetA.erc20Address).transferFrom(address(bridge), rollupProcessor, outputValueA);
 
@@ -317,11 +236,7 @@ contract UniswapBridgeUnitTest is Test {
 
         uint256 quote = QUOTER.quoteExactInput(abi.encodePacked(USDT, uint24(500), WETH), swapAmount);
         uint64 encodedPath = bridge.encodePath(
-            swapAmount,
-            quote,
-            USDT,
-            emptySplitPath,
-            UniswapBridge.SplitPath(100, 100, address(0), 100, address(0), 500)
+            swapAmount, quote, USDT, emptySplitPath, UniswapBridge.SplitPath(100, 100, address(0), 100, address(0), 500)
         );
 
         address[] memory tokensIn = new address[](1);
@@ -333,30 +248,16 @@ contract UniswapBridgeUnitTest is Test {
         bridge.preApproveTokens(tokensIn, tokensOut);
 
         // Define input and output assets
-        AztecTypes.AztecAsset memory inputAssetA = AztecTypes.AztecAsset({
-            id: 4,
-            erc20Address: USDT,
-            assetType: AztecTypes.AztecAssetType.ERC20
-        });
+        AztecTypes.AztecAsset memory inputAssetA =
+            AztecTypes.AztecAsset({id: 4, erc20Address: USDT, assetType: AztecTypes.AztecAssetType.ERC20});
 
-        AztecTypes.AztecAsset memory outputAssetA = AztecTypes.AztecAsset({
-            id: 2,
-            erc20Address: WETH,
-            assetType: AztecTypes.AztecAssetType.ERC20
-        });
+        AztecTypes.AztecAsset memory outputAssetA =
+            AztecTypes.AztecAsset({id: 2, erc20Address: WETH, assetType: AztecTypes.AztecAssetType.ERC20});
 
         deal(USDT, address(bridge), swapAmount);
 
-        (uint256 outputValueA, , ) = bridge.convert(
-            inputAssetA,
-            emptyAsset,
-            outputAssetA,
-            emptyAsset,
-            swapAmount,
-            0,
-            encodedPath,
-            address(0)
-        );
+        (uint256 outputValueA,,) =
+            bridge.convert(inputAssetA, emptyAsset, outputAssetA, emptyAsset, swapAmount, 0, encodedPath, address(0));
 
         IERC20(outputAssetA.erc20Address).transferFrom(address(bridge), rollupProcessor, outputValueA);
 
@@ -380,30 +281,17 @@ contract UniswapBridgeUnitTest is Test {
         bridge.preApproveTokens(tokensIn, tokensOut);
 
         // Define input and output assets
-        AztecTypes.AztecAsset memory inputAssetA = AztecTypes.AztecAsset({
-            id: 0,
-            erc20Address: address(0),
-            assetType: AztecTypes.AztecAssetType.ETH
-        });
+        AztecTypes.AztecAsset memory inputAssetA =
+            AztecTypes.AztecAsset({id: 0, erc20Address: address(0), assetType: AztecTypes.AztecAssetType.ETH});
 
-        AztecTypes.AztecAsset memory outputAssetA = AztecTypes.AztecAsset({
-            id: 2,
-            erc20Address: DAI,
-            assetType: AztecTypes.AztecAssetType.ERC20
-        });
+        AztecTypes.AztecAsset memory outputAssetA =
+            AztecTypes.AztecAsset({id: 2, erc20Address: DAI, assetType: AztecTypes.AztecAssetType.ERC20});
 
         deal(rollupProcessor, swapAmount);
 
         vm.expectRevert(UniswapBridge.InsufficientAmountOut.selector);
         bridge.convert{value: swapAmount}(
-            inputAssetA,
-            emptyAsset,
-            outputAssetA,
-            emptyAsset,
-            swapAmount,
-            0,
-            encodedPath,
-            address(0)
+            inputAssetA, emptyAsset, outputAssetA, emptyAsset, swapAmount, 0, encodedPath, address(0)
         );
     }
 
@@ -412,11 +300,7 @@ contract UniswapBridgeUnitTest is Test {
         uint256 swapAmount = bound(_swapAmount, 1e17, 1e22);
 
         uint64 encodedPath = bridge.encodePath(
-            swapAmount,
-            0,
-            WETH,
-            emptySplitPath,
-            UniswapBridge.SplitPath(100, 500, USDC, 100, address(0), 3000)
+            swapAmount, 0, WETH, emptySplitPath, UniswapBridge.SplitPath(100, 500, USDC, 100, address(0), 3000)
         );
 
         address[] memory tokensIn = new address[](1);
@@ -428,32 +312,18 @@ contract UniswapBridgeUnitTest is Test {
         bridge.preApproveTokens(tokensIn, tokensOut);
 
         // Define input and output assets
-        AztecTypes.AztecAsset memory inputAssetA = AztecTypes.AztecAsset({
-            id: 2,
-            erc20Address: WETH,
-            assetType: AztecTypes.AztecAssetType.ERC20
-        });
+        AztecTypes.AztecAsset memory inputAssetA =
+            AztecTypes.AztecAsset({id: 2, erc20Address: WETH, assetType: AztecTypes.AztecAssetType.ERC20});
 
-        AztecTypes.AztecAsset memory outputAssetA = AztecTypes.AztecAsset({
-            id: 4,
-            erc20Address: GUSD,
-            assetType: AztecTypes.AztecAssetType.ERC20
-        });
+        AztecTypes.AztecAsset memory outputAssetA =
+            AztecTypes.AztecAsset({id: 4, erc20Address: GUSD, assetType: AztecTypes.AztecAssetType.ERC20});
 
         uint256 quote = bridge.quote(swapAmount, inputAssetA.erc20Address, encodedPath, outputAssetA.erc20Address);
 
         deal(WETH, address(bridge), swapAmount);
 
-        (uint256 outputValueA, , ) = bridge.convert(
-            inputAssetA,
-            emptyAsset,
-            outputAssetA,
-            emptyAsset,
-            swapAmount,
-            0,
-            encodedPath,
-            address(0)
-        );
+        (uint256 outputValueA,,) =
+            bridge.convert(inputAssetA, emptyAsset, outputAssetA, emptyAsset, swapAmount, 0, encodedPath, address(0));
 
         IERC20(outputAssetA.erc20Address).transferFrom(address(bridge), rollupProcessor, outputValueA);
 

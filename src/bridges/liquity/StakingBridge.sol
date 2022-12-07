@@ -4,7 +4,7 @@ pragma solidity >=0.8.4;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {AztecTypes} from "../../aztec/libraries/AztecTypes.sol";
+import {AztecTypes} from "rollup-encoder/libraries/AztecTypes.sol";
 import {IWETH} from "../../interfaces/IWETH.sol";
 import {BridgeBase} from "../base/BridgeBase.sol";
 import {ErrorLib} from "../base/ErrorLib.sol";
@@ -83,7 +83,7 @@ contract StakingBridge is BridgeBase, ERC20("StakingBridge", "SB") {
      *
      * @param _inputAssetA - LQTY (Staking) or SB (Unstaking)
      * @param _outputAssetA - SB (Staking) or LQTY (Unstaking)
-     * @param _inputValue - the amount of LQTY to stake or the amount of SB to burn and exchange for LQTY
+     * @param _totalInputValue - the amount of LQTY to stake or the amount of SB to burn and exchange for LQTY
      * @param _auxData - when set to 1 during withdrawals "urgent withdrawal mode" is set (see note bellow)
      * @return outputValueA - the amount of SB (Staking) or LQTY (Unstaking) minted/transferred to
      * the RollupProcessor.sol
@@ -100,36 +100,26 @@ contract StakingBridge is BridgeBase, ERC20("StakingBridge", "SB") {
         AztecTypes.AztecAsset calldata,
         AztecTypes.AztecAsset calldata _outputAssetA,
         AztecTypes.AztecAsset calldata,
-        uint256 _inputValue,
+        uint256 _totalInputValue,
         uint256,
         uint64 _auxData,
         address
-    )
-        external
-        payable
-        override(BridgeBase)
-        onlyRollup
-        returns (
-            uint256 outputValueA,
-            uint256,
-            bool
-        )
-    {
+    ) external payable override (BridgeBase) onlyRollup returns (uint256 outputValueA, uint256, bool) {
         if (_inputAssetA.erc20Address == LQTY && _outputAssetA.erc20Address == address(this)) {
             // Deposit
             // Stake and claim rewards
-            STAKING_CONTRACT.stake(_inputValue);
+            STAKING_CONTRACT.stake(_totalInputValue);
             _swapRewardsToLQTYAndStake(false);
             uint256 totalSupply = totalSupply();
             // outputValueA = how much SB should be minted
             if (totalSupply == 0) {
                 // When the totalSupply is 0, I set the SB/LQTY ratio to be 1.
-                outputValueA = _inputValue;
+                outputValueA = _totalInputValue;
             } else {
-                uint256 totalLQTYOwnedBeforeDeposit = STAKING_CONTRACT.stakes(address(this)) - _inputValue;
+                uint256 totalLQTYOwnedBeforeDeposit = STAKING_CONTRACT.stakes(address(this)) - _totalInputValue;
                 // totalSupply / totalLQTYOwnedBeforeDeposit = how much SB one LQTY is worth
                 // When I multiply this ^ with the amount of LQTY deposited I get the amount of SB to be minted.
-                outputValueA = (totalSupply * _inputValue) / totalLQTYOwnedBeforeDeposit;
+                outputValueA = (totalSupply * _totalInputValue) / totalLQTYOwnedBeforeDeposit;
             }
             _mint(address(this), outputValueA);
         } else if (_inputAssetA.erc20Address == address(this) && _outputAssetA.erc20Address == LQTY) {
@@ -140,9 +130,9 @@ contract StakingBridge is BridgeBase, ERC20("StakingBridge", "SB") {
 
             // STAKING_CONTRACT.stakes(address(this)) / totalSupply() = how much LQTY is one SB
             // outputValueA = amount of LQTY to be withdrawn and sent to rollupProcessor
-            outputValueA = (STAKING_CONTRACT.stakes(address(this)) * _inputValue) / totalSupply();
+            outputValueA = (STAKING_CONTRACT.stakes(address(this)) * _totalInputValue) / totalSupply();
             STAKING_CONTRACT.unstake(outputValueA);
-            _burn(address(this), _inputValue);
+            _burn(address(this), _totalInputValue);
         } else {
             revert ErrorLib.InvalidInput();
         }
@@ -151,7 +141,7 @@ contract StakingBridge is BridgeBase, ERC20("StakingBridge", "SB") {
     /**
      * @dev See {IERC20-totalSupply}.
      */
-    function totalSupply() public view override(ERC20) returns (uint256) {
+    function totalSupply() public view override (ERC20) returns (uint256) {
         return super.totalSupply() - DUST;
     }
 
@@ -165,17 +155,15 @@ contract StakingBridge is BridgeBase, ERC20("StakingBridge", "SB") {
     function _swapRewardsToLQTYAndStake(bool _isUrgentWithdrawalMode) internal {
         uint256 lusdBalance = IERC20(LUSD).balanceOf(address(this));
         if (lusdBalance > MIN_LUSD_SWAP_AMT) {
-            try
-                UNI_ROUTER.exactInput(
-                    ISwapRouter.ExactInputParams({
-                        path: abi.encodePacked(LUSD, uint24(500), USDC, uint24(500), WETH),
-                        recipient: address(this),
-                        deadline: block.timestamp,
-                        amountIn: lusdBalance - DUST,
-                        amountOutMinimum: 0
-                    })
-                )
-            {} catch (bytes memory) {
+            try UNI_ROUTER.exactInput(
+                ISwapRouter.ExactInputParams({
+                    path: abi.encodePacked(LUSD, uint24(500), USDC, uint24(500), WETH),
+                    recipient: address(this),
+                    deadline: block.timestamp,
+                    amountIn: lusdBalance - DUST,
+                    amountOutMinimum: 0
+                })
+            ) {} catch (bytes memory) {
                 if (!_isUrgentWithdrawalMode) {
                     revert SwapFailed();
                 }
@@ -190,20 +178,11 @@ contract StakingBridge is BridgeBase, ERC20("StakingBridge", "SB") {
 
         uint256 wethBalance = IERC20(WETH).balanceOf(address(this));
         if (wethBalance > MIN_ETH_SWAP_AMT) {
-            try
-                UNI_ROUTER.exactInputSingle(
-                    ISwapRouter.ExactInputSingleParams(
-                        WETH,
-                        LQTY,
-                        3000,
-                        address(this),
-                        block.timestamp,
-                        wethBalance - DUST,
-                        0,
-                        0
-                    )
+            try UNI_ROUTER.exactInputSingle(
+                ISwapRouter.ExactInputSingleParams(
+                    WETH, LQTY, 3000, address(this), block.timestamp, wethBalance - DUST, 0, 0
                 )
-            returns (uint256 amountLQTYOut) {
+            ) returns (uint256 amountLQTYOut) {
                 if (amountLQTYOut != 0) {
                     STAKING_CONTRACT.stake(amountLQTYOut);
                 }

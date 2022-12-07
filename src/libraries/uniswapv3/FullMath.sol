@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //pragma solidity >=0.4.0 <0.8.0;
 
-pragma solidity >=0.6.10 <=0.8.10;
+pragma solidity >=0.6.10;
 
 ///note: @dev of Aztec Connect Uniswap V3 Bridge for LP. This library has been modified to conform to version 0.8.x of solidity.
 ///the first change is on line 74, which was originally a unary negation of an unsigned integer like thus:
@@ -21,11 +21,7 @@ library FullMath {
     /// @param denominator The divisor
     /// @return result The 256-bit result
     /// @dev Credit to Remco Bloemen under MIT license https://xn--2-umb.com/21/muldiv
-    function mulDiv(
-        uint256 a,
-        uint256 b,
-        uint256 denominator
-    ) internal pure returns (uint256 result) {
+    function mulDiv(uint256 a, uint256 b, uint256 denominator) internal pure returns (uint256 result) {
         // 512-bit multiply [prod1 prod0] = a * b
         // Compute the product mod 2**256 and mod 2**256 - 1
         // then use the Chinese Remainder Theorem to reconstruct
@@ -123,11 +119,7 @@ library FullMath {
     /// @param b The multiplier
     /// @param denominator The divisor
     /// @return result The 256-bit result
-    function mulDivRoundingUp(
-        uint256 a,
-        uint256 b,
-        uint256 denominator
-    ) internal pure returns (uint256 result) {
+    function mulDivRoundingUp(uint256 a, uint256 b, uint256 denominator) internal pure returns (uint256 result) {
         result = mulDiv(a, b, denominator);
         if (mulmod(a, b, denominator) > 0) {
             require(result < type(uint256).max);

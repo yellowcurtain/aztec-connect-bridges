@@ -3,7 +3,8 @@
 pragma solidity >=0.8.4;
 
 import {IDefiBridge} from "../../aztec/interfaces/IDefiBridge.sol";
-import {AztecTypes} from "../../aztec/libraries/AztecTypes.sol";
+import {ISubsidy} from "../../aztec/interfaces/ISubsidy.sol";
+import {AztecTypes} from "rollup-encoder/libraries/AztecTypes.sol";
 import {ErrorLib} from "./ErrorLib.sol";
 
 /**
@@ -15,6 +16,7 @@ import {ErrorLib} from "./ErrorLib.sol";
 abstract contract BridgeBase is IDefiBridge {
     error MissingImplementation();
 
+    ISubsidy public constant SUBSIDY = ISubsidy(0xABc30E831B5Cc173A9Ed5941714A7845c909e7fA);
     address public immutable ROLLUP_PROCESSOR;
 
     constructor(address _rollupProcessor) {
@@ -37,17 +39,7 @@ abstract contract BridgeBase is IDefiBridge {
         uint256,
         uint64,
         address
-    )
-        external
-        payable
-        virtual
-        override(IDefiBridge)
-        returns (
-            uint256,
-            uint256,
-            bool
-        )
-    {
+    ) external payable virtual override (IDefiBridge) returns (uint256, uint256, bool) {
         revert MissingImplementation();
     }
 
@@ -58,17 +50,22 @@ abstract contract BridgeBase is IDefiBridge {
         AztecTypes.AztecAsset calldata,
         uint256,
         uint64
-    )
-        external
-        payable
-        virtual
-        override(IDefiBridge)
-        returns (
-            uint256,
-            uint256,
-            bool
-        )
-    {
+    ) external payable virtual override (IDefiBridge) returns (uint256, uint256, bool) {
         revert ErrorLib.AsyncDisabled();
+    }
+
+    /**
+     * @notice Computes the criteria that is passed on to the subsidy contract when claiming
+     * @dev Should be overridden by bridge implementation if intended to limit subsidy.
+     * @return The criteria to be passed along
+     */
+    function computeCriteria(
+        AztecTypes.AztecAsset calldata,
+        AztecTypes.AztecAsset calldata,
+        AztecTypes.AztecAsset calldata,
+        AztecTypes.AztecAsset calldata,
+        uint64
+    ) public view virtual returns (uint256) {
+        return 0;
     }
 }

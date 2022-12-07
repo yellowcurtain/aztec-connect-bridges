@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity >=0.6.10 <=0.8.10;
+pragma solidity >=0.6.10;
 
 /// @title Pool state that is not stored
 /// @notice Contains view functions to provide information about the pool that is computed rather than stored on the
@@ -32,9 +32,5 @@ interface IUniswapV3PoolDerivedState {
     function snapshotCumulativesInside(int24 tickLower, int24 tickUpper)
         external
         view
-        returns (
-            int56 tickCumulativeInside,
-            uint160 secondsPerLiquidityInsideX128,
-            uint32 secondsInside
-        );
+        returns (int56 tickCumulativeInside, uint160 secondsPerLiquidityInsideX128, uint32 secondsInside);
 }
